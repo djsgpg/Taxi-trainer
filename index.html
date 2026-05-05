@@ -51,21 +51,6 @@
     font-size:17px;
   }
 
-  #dayNight{
-    position:fixed;
-    left:130px;
-    bottom:calc(var(--control-h) + var(--safe-bottom) + 16px);
-    width:102px;
-    height:54px;
-    z-index:60;
-    border-radius:14px;
-    border:1px solid rgba(185,210,245,.45);
-    background:#ffca28;
-    color:#111;
-    font-weight:900;
-    font-size:17px;
-  }
-
   #controls{
     position:fixed;
     bottom:var(--safe-bottom);
@@ -86,12 +71,19 @@
     color:white;
     font-size:23px;
     font-weight:900;
+    letter-spacing:.3px;
+    box-shadow:0 4px 0 rgba(0,0,0,.35), inset 0 1px rgba(255,255,255,.15);
   }
+  #controls button:active, #controls button.active{ transform:translateY(2px); box-shadow:0 2px 0 rgba(0,0,0,.35); background:#244c78; }
   #throttle{ background:#1f6f48!important; }
+  #throttle:active, #throttle.active{ background:#2a935e!important; }
+
+  @media (max-width: 900px){
+    #message{ left:190px; right:16px; }
+  }
 </style>
 </head>
 <body>
-
 <canvas id="sim"></canvas>
 
 <div id="message">
@@ -100,7 +92,6 @@
 </div>
 
 <button id="reset">RESET</button>
-<button id="dayNight">DAY</button>
 
 <div id="controls">
   <button id="left">LEFT</button>
@@ -109,57 +100,143 @@
 </div>
 
 <script>
-let mode='day';
+const canvas = document.getElementById('sim');
+const ctx = canvas.getContext('2d');
+const msg = document.getElementById('message');
 
-document.getElementById('dayNight').onclick=()=>{
-  mode = mode==='day'?'night':'day';
-  document.getElementById('dayNight').textContent = mode.toUpperCase();
-};
-
-const canvas=document.getElementById('sim');
-const ctx=canvas.getContext('2d');
-
+function W(){ return innerWidth; }
+function H(){ return innerHeight; }
+function viewBottom(){ return H() - 104 - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom')||0); }
 function resize(){
-  canvas.width=innerWidth;
-  canvas.height=innerHeight;
+  const dpr = Math.max(1, Math.min(2, devicePixelRatio || 1));
+  canvas.width = Math.floor(W()*dpr);
+  canvas.height = Math.floor(H()*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
 }
-resize(); addEventListener('resize',resize);
+addEventListener('resize', resize); resize();
 
-let x=0, y=0, hdg=0;
-let input={l:false,r:false,t:false};
+let input={left:false,right:false,throttle:false};
+let aircraft, gameOver=false, outcome='';
+const taxiA = {x1:0,y1:0,x2:760,y2:0,width:72};
+const taxiB = {x1:155,y1:-330,x2:155,y2:180,width:64};
+const runway = {x1:720,y1:-290,x2:720,y2:290,width:110};
+const holdX = 635;
 
-document.getElementById('left').ontouchstart=()=>input.l=true;
-document.getElementById('left').ontouchend=()=>input.l=false;
-document.getElementById('right').ontouchstart=()=>input.r=true;
-document.getElementById('right').ontouchend=()=>input.r=false;
-document.getElementById('throttle').ontouchstart=()=>input.t=true;
-document.getElementById('throttle').ontouchend=()=>input.t=false;
+function reset(){
+  aircraft={x:35,y:0,hdg:0};
+  gameOver=false; outcome='';
+  msg.innerHTML='<div class="title">Taxi to RWY 20R via A. Hold short RWY 20R.</div><div class="sub">Stay on the yellow centerline and stop before the hold-short bars.</div>';
+}
+reset();
 
-function loop(){
-  if(input.l) hdg-=.03;
-  if(input.r) hdg+=.03;
-  if(input.t){
-    x+=Math.cos(hdg)*2;
-    y+=Math.sin(hdg)*2;
+document.getElementById('reset').onclick=reset;
+function bind(id,key){
+  const b=document.getElementById(id);
+  const on=e=>{e.preventDefault(); input[key]=true; b.classList.add('active');};
+  const off=e=>{e.preventDefault(); input[key]=false; b.classList.remove('active');};
+  b.addEventListener('touchstart',on,{passive:false}); b.addEventListener('touchend',off,{passive:false}); b.addEventListener('touchcancel',off,{passive:false});
+  b.addEventListener('mousedown',on); b.addEventListener('mouseup',off); b.addEventListener('mouseleave',off);
+}
+bind('left','left'); bind('right','right'); bind('throttle','throttle');
+
+function fail(t){ if(gameOver)return; gameOver=true; outcome='FAILED'; msg.innerHTML='<div class="title" style="color:#ff7777">FAILED</div><div class="sub">'+t+'</div>'; }
+function pass(){ if(gameOver)return; gameOver=true; outcome='PASSED'; msg.innerHTML='<div class="title" style="color:#7dff9d">PASSED</div><div class="sub">You stopped short of RWY 20R.</div>'; }
+
+function distToSeg(px,py,x1,y1,x2,y2){
+  const A=px-x1,B=py-y1,C=x2-x1,D=y2-y1,l=C*C+D*D;
+  const t=Math.max(0,Math.min(1,(A*C+B*D)/l));
+  return Math.hypot(px-(x1+t*C), py-(y1+t*D));
+}
+function onA(){ return distToSeg(aircraft.x,aircraft.y,taxiA.x1,taxiA.y1,taxiA.x2,taxiA.y2) < taxiA.width/2; }
+
+function update(){
+  if(gameOver) return;
+  if(input.left) aircraft.hdg -= .036;
+  if(input.right) aircraft.hdg += .036;
+  if(input.throttle){ aircraft.x += Math.cos(aircraft.hdg)*2.35; aircraft.y += Math.sin(aircraft.hdg)*2.35; }
+  if(!onA()) fail('You left cleared Taxiway Alpha or turned onto the wrong surface.');
+  if(aircraft.x>holdX) fail('You crossed the RWY 20R hold-short marking.');
+  if(aircraft.x>590 && aircraft.x<632 && Math.abs(aircraft.y)<28 && !input.throttle) pass();
+}
+
+function cam(wx,wy){
+  const dx=wx-aircraft.x, dy=wy-aircraft.y;
+  const c=Math.cos(-aircraft.hdg), s=Math.sin(-aircraft.hdg);
+  return {f:dx*c-dy*s, side:dx*s+dy*c};
+}
+function proj(f,side){
+  const horizon=viewBottom()*0.44;
+  const floorY=viewBottom();
+  f=Math.max(12,f);
+  const scale=620/f;
+  return {x:W()/2+side*scale, y:horizon+(floorY-horizon)*(1-Math.min(1,70/f)), scale};
+}
+function poly(points,fill){ ctx.fillStyle=fill; ctx.beginPath(); points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.closePath(); ctx.fill(); }
+
+function drawScene(){
+  const vb=viewBottom(), horizon=vb*.44;
+  const grd=ctx.createLinearGradient(0,horizon,0,vb); grd.addColorStop(0,'#24362f'); grd.addColorStop(1,'#0b1111');
+  const sky=ctx.createLinearGradient(0,0,0,horizon); sky.addColorStop(0,'#07142c'); sky.addColorStop(1,'#10233f');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,W(),horizon);
+  ctx.fillStyle='#172946'; ctx.fillRect(0,horizon-9,W(),9);
+  ctx.fillStyle=grd; ctx.fillRect(0,horizon,W(),vb-horizon);
+
+  for(let d=22;d<760;d+=38){
+    const a=proj(d,-36), b=proj(d,36), c=proj(d+40,36), e=proj(d+40,-36);
+    poly([a,b,c,e], d%76===22?'#2f3436':'#303638');
+    if(d%76===22){
+      const p1=proj(d,0), p2=proj(d+25,0);
+      ctx.strokeStyle='#ffd84e'; ctx.lineWidth=Math.max(3,p1.scale*.38);
+      ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+    }
+    // edge lights
+    const l=proj(d,-43), r=proj(d,43);
+    ctx.fillStyle='rgba(80,160,255,.9)'; ctx.beginPath(); ctx.arc(l.x,l.y,Math.max(2,l.scale*.25),0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(r.x,r.y,Math.max(2,r.scale*.25),0,Math.PI*2); ctx.fill();
   }
 
-  ctx.fillStyle = mode==='night' ? '#061226' : '#9fd3ff';
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // hold short bars
+  const hc=cam(holdX,0);
+  if(hc.f>18 && hc.f<700){
+    [-10,-4,4,10].forEach(o=>{
+      const a=proj(hc.f+o,-36), b=proj(hc.f+o,36);
+      ctx.strokeStyle='#ffdf00'; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    });
+  }
 
-  ctx.fillStyle = mode==='night' ? '#2f3436' : '#555';
-  ctx.fillRect(canvas.width/2-100, canvas.height/2, 200, canvas.height);
-
-  ctx.strokeStyle='yellow';
-  ctx.lineWidth=4;
-  ctx.beginPath();
-  ctx.moveTo(canvas.width/2, canvas.height);
-  ctx.lineTo(canvas.width/2, canvas.height/2);
-  ctx.stroke();
-
-  requestAnimationFrame(loop);
+  drawSign('A',210,-53,false); drawSign('B',155,-75,false); drawSign('20R-2L',600,55,true);
+  ctx.fillStyle='rgba(255,255,255,.72)'; ctx.font='15px Arial'; ctx.textAlign='center'; ctx.fillText('First-person taxi view',W()/2,vb-56); ctx.textAlign='left';
 }
+function drawSign(label,x,y,red){
+  const c=cam(x,y); if(c.f<25||c.f>650)return; const p=proj(c.f,c.side); const w=Math.max(48,Math.min(118,p.scale*13)); const h=w*.42;
+  ctx.fillStyle=red?'#8b0f11':'#050505'; ctx.strokeStyle='#ffff00'; ctx.lineWidth=2;
+  ctx.fillRect(p.x-w/2,p.y-h/2,w,h); ctx.strokeRect(p.x-w/2,p.y-h/2,w,h);
+  ctx.fillStyle=red?'white':'#ffff00'; ctx.font=`${Math.max(12,w*.22)}px Arial`; ctx.textAlign='center'; ctx.fillText(label,p.x,p.y+h*.15); ctx.textAlign='left';
+}
+
+function mapX(x){return 14+(x+35)/820*220;} function mapY(y){return 14+(y+360)/720*220;}
+function drawMiniMap(){
+  const mx=14,my=14,mw=220,mh=220;
+  ctx.fillStyle='rgba(16,55,25,.94)'; ctx.fillRect(mx,my,mw,mh);
+  ctx.strokeStyle='rgba(190,220,255,.24)'; ctx.lineWidth=1; ctx.strokeRect(mx,my,mw,mh);
+  function road(x1,y1,x2,y2,w){ctx.strokeStyle='#5d6668'; ctx.lineWidth=w/5; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(mapX(x1),mapY(y1)); ctx.lineTo(mapX(x2),mapY(y2)); ctx.stroke();}
+  road(taxiA.x1,taxiA.y1,taxiA.x2,taxiA.y2,taxiA.width); road(taxiB.x1,taxiB.y1,taxiB.x2,taxiB.y2,taxiB.width); road(runway.x1,runway.y1,runway.x2,runway.y2,runway.width);
+  ctx.strokeStyle='#ffd84e'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(mapX(taxiA.x1),mapY(0)); ctx.lineTo(mapX(taxiA.x2),mapY(0)); ctx.stroke();
+  ctx.fillStyle='white'; ctx.font='14px Arial'; ctx.fillText('A',mapX(245),mapY(-50)); ctx.fillText('B',mapX(165),mapY(-95)); ctx.fillText('20R',mapX(700),mapY(130));
+  ctx.strokeStyle='#ffdf00'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(mapX(holdX),mapY(-36)); ctx.lineTo(mapX(holdX),mapY(36)); ctx.stroke();
+  ctx.fillStyle='#58ff80'; ctx.beginPath(); ctx.arc(mapX(aircraft.x),mapY(aircraft.y),7,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='white'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(mapX(aircraft.x),mapY(aircraft.y)); ctx.lineTo(mapX(aircraft.x)+Math.cos(aircraft.hdg)*20,mapY(aircraft.y)+Math.sin(aircraft.hdg)*20); ctx.stroke();
+}
+function drawStatus(){
+  const x=W()-232,y=14,w=218,h=218;
+  ctx.fillStyle='rgba(0,20,15,.72)'; ctx.fillRect(x,y,w,h); ctx.strokeStyle='rgba(180,220,190,.35)'; ctx.lineWidth=2; ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='rgba(255,255,255,.8)'; ctx.font='15px Arial'; ctx.fillText('HDG '+Math.round((aircraft.hdg*180/Math.PI+360)%360)+'°',x+18,y+30);
+  ctx.fillText(input.throttle?'MOVING':'STOPPED',x+18,y+55);
+  if(gameOver){ ctx.font='28px Arial'; ctx.fillStyle=outcome==='PASSED'?'#7dff9d':'#ff7777'; ctx.fillText(outcome,x+18,y+105); }
+}
+function loop(){ update(); ctx.clearRect(0,0,W(),H()); drawScene(); drawMiniMap(); drawStatus(); requestAnimationFrame(loop); }
 loop();
 </script>
-
 </body>
 </html>
