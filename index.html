@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Airport Taxi Trainer</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05070b;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;touch-action:none;-webkit-user-select:none;user-select:none}#app{position:fixed;inset:0;overflow:hidden}canvas{position:absolute;inset:0;width:100%;height:100%;display:block}.panel{position:absolute;background:rgba(0,0,0,.62);color:#fff;border:1px solid rgba(255,255,255,.24);border-radius:14px;padding:10px 12px;backdrop-filter:blur(8px);font-size:14px}.top{top:calc(10px + env(safe-area-inset-top));left:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.clearance{top:calc(72px + env(safe-area-inset-top));left:10px;max-width:min(620px,calc(100vw - 20px))}.score{top:calc(150px + env(safe-area-inset-top));left:10px}.label{font-size:12px;color:#ffdf5d;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}button{font:inherit;border:0;border-radius:12px;padding:10px 12px;background:#f1c232;color:#111;font-weight:700;touch-action:manipulation}#controls{position:absolute;left:0;right:0;bottom:calc(16px + env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:10px;padding:0 12px}#controls button{height:74px;font-size:20px;background:rgba(255,255,255,.88);border:2px solid rgba(0,0,0,.25)}#throttle{background:#7ee787!important}@media (orientation:portrait){.top,.clearance,.score{font-size:12px}.score{top:calc(138px + env(safe-area-inset-top))}#controls{grid-template-columns:1fr 1fr;}.panel{padding:8px 10px}}
+</style>
+</head>
+<body>
+<div id="app">
+<canvas id="sim"></canvas>
+<div class="panel top"><div><strong>Airport:</strong> KSNA Demo</div><div><strong>Mode:</strong> <span id="mode">Night</span></div><button id="nightBtn">Day/Night</button><button id="resetBtn">Reset</button></div>
+<div class="panel clearance"><div class="label">Ground Clearance</div><div id="clearanceText">Taxi to Runway 20R via Alpha, Alpha One. Hold short Runway 20R.</div></div>
+<div class="panel score"><div><strong>Speed:</strong> <span id="speed">0</span> kt</div><div><strong>Heading:</strong> <span id="heading">270</span>°</div><div><strong>Status:</strong> <span id="status">Follow taxiway A.</span></div></div>
+<div id="controls"><button id="left">◀︎ LEFT</button><button id="throttle">THROTTLE</button><button id="right">RIGHT ▶︎</button></div>
+</div>
+<script>
+(() => {
+const canvas=document.getElementById('sim'),ctx=canvas.getContext('2d');
+let W=0,H=0,night=false;
+const plane={x:180,y:540,heading:90,speed:0,steer:0,throttle:false};
+const runway={x:1015,y:60,w:150,h:760};
+const taxiways=[
+ {name:'A',x1:120,y1:540,x2:940,y2:540,w:80},
+ {name:'B',x1:520,y1:220,x2:520,y2:760,w:70},
+ {name:'A1',x1:860,y1:540,x2:1030,y2:390,w:60},
+ {name:'Ramp',x1:120,y1:650,x2:360,y2:650,w:150}
+];
+function resize(){const d=window.devicePixelRatio||1;W=canvas.width=Math.floor(innerWidth*d);H=canvas.height=Math.floor(innerHeight*d);canvas.style.width=innerWidth+'px';canvas.style.height=innerHeight+'px';ctx.setTransform(d,0,0,d,0,0);W=innerWidth;H=innerHeight}window.addEventListener('resize',resize);resize();
+const R=d=>d*Math.PI/180;
+function dot(x,y,c,r=4,glow=true){ctx.beginPath();ctx.fillStyle=c;if(glow){ctx.shadowColor=c;ctx.shadowBlur=12}ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0}
+function rr(cx,cy,w,h,a,fill){ctx.save();ctx.translate(cx,cy);ctx.rotate(R(a));ctx.fillStyle=fill;ctx.fillRect(-w/2,-h/2,w,h);ctx.restore()}
+function signMap(x,y,text,type){ctx.save();ctx.translate(x,y);ctx.fillStyle=type==='hold'?'#a30f12':'#111';ctx.fillRect(-46,-18,92,36);ctx.strokeStyle=type==='direction'?'#f4d03f':'#fff';ctx.lineWidth=3;ctx.strokeRect(-46,-18,92,36);ctx.fillStyle=type==='hold'?'#fff':'#f4d03f';ctx.font='bold 18px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,0,2);ctx.restore()}
+function airportMap(){
+ ctx.fillStyle=night?'#0a0d12':'#6f8a64';ctx.fillRect(0,0,1200,850);
+ ctx.fillStyle=night?'#202329':'#777b80';ctx.fillRect(70,580,360,170);
+ rr(runway.x,runway.y+380,runway.w,runway.h,0,night?'#15181d':'#565a61');
+ ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.setLineDash([38,28]);ctx.beginPath();ctx.moveTo(runway.x,90);ctx.lineTo(runway.x,790);ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle='#fff';ctx.font='bold 34px sans-serif';ctx.textAlign='center';ctx.fillText('20R',runway.x,150);ctx.save();ctx.translate(runway.x,760);ctx.rotate(Math.PI);ctx.fillText('2L',0,0);ctx.restore();
+ taxiways.forEach(t=>{ctx.strokeStyle=night?'#242830':'#64686d';ctx.lineWidth=t.w;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(t.x1,t.y1);ctx.lineTo(t.x2,t.y2);ctx.stroke();ctx.strokeStyle='#f6d344';ctx.lineWidth=4;ctx.setLineDash([28,22]);ctx.beginPath();ctx.moveTo(t.x1,t.y1);ctx.lineTo(t.x2,t.y2);ctx.stroke();ctx.setLineDash([])});
+ ctx.strokeStyle='#f6d344';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(930,450);ctx.lineTo(990,520);ctx.stroke();ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(945,435);ctx.lineTo(1005,505);ctx.stroke();ctx.setLineDash([8,8]);ctx.beginPath();ctx.moveTo(910,470);ctx.lineTo(970,540);ctx.stroke();ctx.beginPath();ctx.moveTo(895,485);ctx.lineTo(955,555);ctx.stroke();ctx.setLineDash([]);
+ signMap(465,505,'A','location');signMap(540,405,'B','location');signMap(840,498,'A1 →','direction');signMap(915,445,'20R-2L','hold');
+ if(night){for(let x=140;x<940;x+=60){dot(x,493,'#376dff');dot(x,587,'#376dff')}for(let y=95;y<790;y+=46){dot(925,y,'#fff');dot(1105,y,'#fff')}dot(950,505,'#ff3333',5);dot(965,490,'#ff3333',5)}
+}
+function project(wx,wy){
+ const dx=wx-plane.x,dy=wy-plane.y; const h=R(plane.heading);
+ const right=Math.cos(h)*dx+Math.sin(h)*dy;
+ const fwd=Math.sin(h)*dx-Math.cos(h)*dy;
+ if(fwd<8||fwd>900)return null;
+ const scale=520/fwd, horizon=H*.36;
+ return {x:W/2+right*scale,y:horizon+80*scale,f:fwd,scale};
+}
+function drawSegment(x1,y1,x2,y2,color,width,dash=false){
+ const p1=project(x1,y1),p2=project(x2,y2); if(!p1&&!p2)return;
+ if(!p1||!p2)return; // clipping is intentionally simple for iPad speed
+ ctx.strokeStyle=color;ctx.lineWidth=Math.max(1,width*((p1.scale+p2.scale)/2));ctx.lineCap='round';
+ if(dash)ctx.setLineDash([18*((p1.scale+p2.scale)/2),14*((p1.scale+p2.scale)/2)]); else ctx.setLineDash([]);
+ ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();ctx.setLineDash([]);
+}
+function drawTaxiwayPerspective(t){
+ const dx=t.x2-t.x1,dy=t.y2-t.y1,len=Math.hypot(dx,dy); const nx=-dy/len,ny=dx/len, half=t.w/2;
+ // wide pavement center and subtle edges
+ drawSegment(t.x1,t.y1,t.x2,t.y2,night?'#323840':'#5e656b',t.w,false);
+ drawSegment(t.x1+nx*half,t.y1+ny*half,t.x2+nx*half,t.y2+ny*half,night?'#1b63ff':'rgba(255,255,255,.28)',2,false);
+ drawSegment(t.x1-nx*half,t.y1-ny*half,t.x2-nx*half,t.y2-ny*half,night?'#1b63ff':'rgba(255,255,255,.28)',2,false);
+ drawSegment(t.x1,t.y1,t.x2,t.y2,'#ffd94c',4,true);
+ if(night){for(let d=35;d<len;d+=55){const x=t.x1+dx/len*d,y=t.y1+dy/len*d;let p=project(x+nx*half,y+ny*half);if(p)dot(p.x,p.y,'#2f75ff',Math.max(2,4*p.scale));p=project(x-nx*half,y-ny*half);if(p)dot(p.x,p.y,'#2f75ff',Math.max(2,4*p.scale));}}
+}
+function drawHoldShort(){drawSegment(920,450,990,520,'#ffd94c',6,false);drawSegment(940,430,1010,500,'#ffd94c',3,false);drawSegment(900,470,970,540,'#ffd94c',3,true);drawSegment(880,490,950,560,'#ffd94c',3,true)}
+function cockpit(){
+ const horizon=H*.36,g=ctx.createLinearGradient(0,0,0,horizon);g.addColorStop(0,night?'#02040b':'#88b8e9');g.addColorStop(1,night?'#101525':'#d9ecff');ctx.fillStyle=g;ctx.fillRect(0,0,W,horizon);
+ const gr=ctx.createLinearGradient(0,horizon,0,H);gr.addColorStop(0,night?'#191d23':'#596067');gr.addColorStop(1,night?'#07080b':'#373b41');ctx.fillStyle=gr;ctx.fillRect(0,horizon,W,H-horizon);
+ // Draw route from far to near so the first-person view actively changes with heading/location
+ [...taxiways].reverse().forEach(drawTaxiwayPerspective);drawHoldShort();
+ // Direction signs appear as the airplane approaches them
+ const pA=project(465,505), pB=project(540,405), pA1=project(840,498), pHold=project(915,445);
+ function fpSign(p,text,bg='#111',fg='#f4d03f'){if(!p)return;ctx.save();ctx.translate(p.x,p.y-35*p.scale);const w=70*p.scale,h=30*p.scale;ctx.fillStyle=bg;ctx.fillRect(-w/2,-h/2,w,h);ctx.strokeStyle=fg;ctx.lineWidth=Math.max(1,2*p.scale);ctx.strokeRect(-w/2,-h/2,w,h);ctx.fillStyle=fg;ctx.font=`bold ${Math.max(10,18*p.scale)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,0,0);ctx.restore()}
+ fpSign(pA,'A');fpSign(pB,'B');fpSign(pA1,'A1 →');fpSign(pHold,'20R-2L','#a30f12','#fff');
+ if(project(945,500)&&plane.x>760){ctx.font='bold 20px sans-serif';ctx.fillStyle='#fff';ctx.textAlign='center';ctx.fillText('HOLD SHORT RUNWAY 20R',W/2,H*.68)}
+}
+function aircraftMap(){ctx.save();ctx.translate(plane.x,plane.y);ctx.rotate(R(plane.heading));ctx.fillStyle='#fff';ctx.beginPath();ctx.moveTo(0,-18);ctx.lineTo(10,14);ctx.lineTo(0,8);ctx.lineTo(-10,14);ctx.closePath();ctx.fill();ctx.restore()}
+function update(){
+ // Steering pivots the aircraft on its own axis, even while stopped.
+ plane.heading+=plane.steer*2.2;
+ // Throttle behaves like holding light taxi power: move only while pressed.
+ plane.speed=plane.throttle?7:0;
+ if(plane.throttle){
+   plane.x+=Math.sin(R(plane.heading))*plane.speed*.55;
+   plane.y-=Math.cos(R(plane.heading))*plane.speed*.55;
+ }
+ plane.x=Math.max(60,Math.min(1120,plane.x)); plane.y=Math.max(80,Math.min(780,plane.y));
+ let status='Taxi via Alpha. Keep the nosewheel on the yellow centerline.';
+ const near=plane.x>875&&plane.y<590&&plane.y>410;
+ if(near&&plane.speed<1)status='Good. Holding short Runway 20R.';
+ if(near&&plane.speed>1.5)status='Caution: hold-short line ahead.';
+ document.getElementById('speed').textContent=Math.round(plane.speed);
+ document.getElementById('heading').textContent=String(Math.round((plane.heading+360)%360)).padStart(3,'0');
+ document.getElementById('status').textContent=status;
+}
+function mini(){
+ const scale=Math.min(0.33,W/1400), mw=1200*scale,mh=850*scale,x=W-mw-16,y=80;
+ ctx.save();ctx.translate(x,y);ctx.scale(scale,scale);ctx.globalAlpha=.94;airportMap();
+ // user location/progress tracker
+ ctx.globalAlpha=1;dot(plane.x,plane.y,'#00ff6a',18,false);ctx.strokeStyle='#fff';ctx.lineWidth=5;ctx.beginPath();ctx.arc(plane.x,plane.y,25,0,Math.PI*2);ctx.stroke();aircraftMap();ctx.restore();
+}
+function render(){update();cockpit();mini();requestAnimationFrame(render)}
+function hold(id,on,off){const el=document.getElementById(id);['touchstart','pointerdown','mousedown'].forEach(e=>el.addEventListener(e,ev=>{ev.preventDefault();on()}));['touchend','touchcancel','pointerup','pointercancel','mouseup','mouseleave'].forEach(e=>el.addEventListener(e,ev=>{ev.preventDefault();if(off)off()}))}
+hold('left',()=>plane.steer=-1,()=>plane.steer=0);hold('right',()=>plane.steer=1,()=>plane.steer=0);hold('throttle',()=>plane.throttle=true,()=>plane.throttle=false);
+document.getElementById('nightBtn').onclick=()=>{night=!night;document.getElementById('mode').textContent=night?'Night':'Day'};
+document.getElementById('resetBtn').onclick=()=>{plane.x=180;plane.y=540;plane.heading=90;plane.speed=0;plane.steer=0;plane.throttle=false};
+document.getElementById('mode').textContent=night?'Night':'Day';render();
+})();
+</script>
+</body>
+</html>
